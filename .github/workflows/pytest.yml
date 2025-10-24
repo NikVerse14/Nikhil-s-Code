@@ -2,6 +2,7 @@ name: tests
 on:
   pull_request:
   push:
+
 jobs:
   pytest:
     runs-on: ubuntu-latest
@@ -11,12 +12,15 @@ jobs:
         with:
           python-version: '3.11'
       - run: python -m pip install -U pip
-      - run: |
+      - name: Install dependencies
+        run: |
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           elif [ -f Requirements.txt ]; then
             pip install -r Requirements.txt
+          else
+            # minimal deps to import the module + run tests
+            pip install pytest numpy pandas yfinance matplotlib pandas-datareader statsmodels
           fi
-          pip install pytest
-      - run: echo "PYTHONPATH=$PWD" >> $GITHUB_ENV
-      - run: python -m pytest -q tests
+      - name: Run tests
+        run: python -m pytest -q
