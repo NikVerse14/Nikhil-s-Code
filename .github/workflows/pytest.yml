@@ -18,6 +18,7 @@ jobs:
           elif [ -f Requirements.txt ]; then
             pip install -r Requirements.txt
           else
+            # minimal deps to import the module + run pytest
             pip install pytest numpy pandas yfinance matplotlib pandas-datareader statsmodels
           fi
       - run: python -m pytest -q
