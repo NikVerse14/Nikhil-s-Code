@@ -420,23 +420,51 @@ def make_one_pager():
 # =============================== Streamlit app ================================
 
 def run_app():
-    import streamlit as st  # do NOT call set_page_config here (already set above)
+    import streamlit as st  # set_page_config already called at import time
     st.title("📈 Multi-Factor Equity Strategy Dashboard")
 
     aligned_path = ART / "aligned_returns.parquet"
     perf_path    = ART / "perf_summary.parquet"
     betas_png    = ART / "ff5_mom_betas.png"
 
-    if not aligned_path.exists():
-        st.error("Missing artifacts/aligned_returns.parquet. Run: python multifactor_pipeline.py --mode build")
+    # If nothing exists at all, bail with an instruction.
+    if not aligned_path.exists() and not (ART / "aligned_returns.csv").exists():
+        st.error("Missing artifacts. Run: python multifactor_pipeline.py --mode build")
         return
 
-    aligned = pd.read_parquet(aligned_path)
+    # ---- robust artifact loading ----
+    try:
+        aligned = pd.read_parquet(aligned_path)
+    except Exception as e:
+        st.warning(f"Parquet read failed ({e}). Using CSV and regenerating Parquet.")
+        aligned = pd.read_csv(ART / "aligned_returns.csv", index_col=0, parse_dates=True)
+        try:
+            aligned.to_parquet(aligned_path)  # rewrite with current engine
+        except Exception:
+            pass
+
+    if perf_path.exists():
+        try:
+            perf = pd.read_parquet(perf_path)
+        except Exception:
+            perf = pd.read_csv(ART / "perf_summary.csv", index_col=0)
+            try:
+                perf.to_parquet(perf_path)
+            except Exception:
+                pass
+    elif (ART / "perf_summary.csv").exists():
+        perf = pd.read_csv(ART / "perf_summary.csv", index_col=0)
+        try:
+            perf.to_parquet(perf_path)
+        except Exception:
+            pass
+    else:
+        perf = None
+
     aligned.index = pd.to_datetime(aligned.index)
     aligned = aligned.sort_index()
 
-    perf = pd.read_parquet(perf_path) if perf_path.exists() else None
-
+    # ===================== UI =====================
     st.sidebar.header("Controls")
     bm_col = "SPY" if "SPY" in aligned.columns else aligned.columns[-1]
     strat_cols = [c for c in aligned.columns if c != bm_col]
@@ -452,7 +480,9 @@ def run_app():
     st.subheader("Cumulative Growth of $1")
     cum = (1 + aligned[[strat, bm_col]].dropna()).cumprod()
     fig1, ax1 = plt.subplots(figsize=(8, 4))
-    cum.plot(ax=ax1, linewidth=2); ax1.grid(alpha=.3); ax1.set_ylabel("Multiple")
+    cum.plot(ax=ax1, linewidth=2)
+    ax1.grid(alpha=.3)
+    ax1.set_ylabel("Multiple")
     st.pyplot(fig1)
 
     st.subheader(f"Rolling {win}-Month Excess vs {bm_col}")
@@ -462,7 +492,10 @@ def run_app():
         roll_b = (1 + both[bm_col]).rolling(win).apply(np.prod, raw=True) - 1
         ex = (roll_s - roll_b).dropna()
         fig2, ax2 = plt.subplots(figsize=(8, 3))
-        ex.plot(ax=ax2, linewidth=2); ax2.axhline(0, ls="--", c="k", alpha=.5); ax2.grid(alpha=.3); ax2.set_ylabel("Excess")
+        ex.plot(ax=ax2, linewidth=2)
+        ax2.axhline(0, ls="--", c="k", alpha=.5)
+        ax2.grid(alpha=.3)
+        ax2.set_ylabel("Excess")
         st.pyplot(fig2)
     else:
         st.info(f"Need at least {win} months.")
@@ -490,7 +523,6 @@ def run_app():
                 st.download_button("⬇️ one_pager_report.pdf", data=f.read(),
                                    file_name="one_pager_report.pdf", mime="application/pdf")
     st.caption("Educational backtest; not investment advice. © You")
-
 
 # ================= CLI entrypoint (positional + flag) =================
 
