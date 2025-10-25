@@ -26,6 +26,7 @@ try:
 except Exception:
     st = None  # not running under `streamlit run`, or Streamlit not installed
 
+
 # ===================== Small helpers (used by tests & pipeline) =====================
 
 def resample_monthly_last(px: pd.DataFrame | pd.Series) -> pd.DataFrame | pd.Series:
@@ -327,7 +328,19 @@ def run_ff_regression():
     import statsmodels.api as sm
     from pandas_datareader import data as web
 
-    aligned = pd.read_parquet(ART / "aligned_returns.parquet")
+    aligned_pq = ART / "aligned_returns.parquet"
+    aligned_csv = ART / "aligned_returns.csv"
+
+    # Robust read of aligned returns (same idea as in run_app)
+    try:
+        aligned = pd.read_parquet(aligned_pq)
+    except Exception:
+        aligned = pd.read_csv(aligned_csv, index_col=0, parse_dates=True)
+        try:
+            aligned.to_parquet(aligned_pq)
+        except Exception:
+            pass
+
     aligned.index = pd.to_datetime(aligned.index)
     best = aligned["COMBO_net"].rename("strat")
 
@@ -427,15 +440,42 @@ def run_app():
     perf_path    = ART / "perf_summary.parquet"
     betas_png    = ART / "ff5_mom_betas.png"
 
-    if not aligned_path.exists():
-        st.error("Missing artifacts/aligned_returns.parquet. Run: python multifactor_pipeline.py --mode build")
+    # If nothing exists at all, bail with an instruction.
+    if not aligned_path.exists() and not (ART / "aligned_returns.csv").exists():
+        st.error("Missing artifacts. Run: python multifactor_pipeline.py --mode build")
         return
 
-    aligned = pd.read_parquet(aligned_path)
+    # ---- robust artifact loading ----
+    try:
+        aligned = pd.read_parquet(aligned_path)
+    except Exception as e:
+        st.warning(f"Parquet read failed ({e}). Falling back to CSV and regenerating Parquet.")
+        aligned = pd.read_csv(ART / "aligned_returns.csv", index_col=0, parse_dates=True)
+        try:
+            aligned.to_parquet(aligned_path)  # rewrite with current engine
+        except Exception:
+            pass
+
+    if perf_path.exists():
+        try:
+            perf = pd.read_parquet(perf_path)
+        except Exception:
+            perf = pd.read_csv(ART / "perf_summary.csv", index_col=0)
+            try:
+                perf.to_parquet(perf_path)
+            except Exception:
+                pass
+    elif (ART / "perf_summary.csv").exists():
+        perf = pd.read_csv(ART / "perf_summary.csv", index_col=0)
+        try:
+            perf.to_parquet(perf_path)
+        except Exception:
+            pass
+    else:
+        perf = None
+
     aligned.index = pd.to_datetime(aligned.index)
     aligned = aligned.sort_index()
-
-    perf = pd.read_parquet(perf_path) if perf_path.exists() else None
 
     st.sidebar.header("Controls")
     bm_col = "SPY" if "SPY" in aligned.columns else aligned.columns[-1]
@@ -510,6 +550,7 @@ def main():
         make_one_pager()
     if mode == "app":
         run_app()
+
 
 if __name__ == "__main__":
     main()
