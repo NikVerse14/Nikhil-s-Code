@@ -18,6 +18,14 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
+# ---- Streamlit page config MUST be the first Streamlit call ----
+# Safe when running via tests/CLI (no Streamlit): we just ignore.
+try:
+    import streamlit as st  # noqa: F401
+    st.set_page_config(page_title="Multi-Factor Strategy", layout="wide")
+except Exception:
+    st = None  # not running under `streamlit run`, or Streamlit not installed
+
 # ===================== Small helpers (used by tests & pipeline) =====================
 
 def resample_monthly_last(px: pd.DataFrame | pd.Series) -> pd.DataFrame | pd.Series:
@@ -412,8 +420,7 @@ def make_one_pager():
 # =============================== Streamlit app ================================
 
 def run_app():
-    import streamlit as st
-    st.set_page_config(page_title="Multi-Factor Strategy", layout="wide")
+    import streamlit as st  # do NOT call set_page_config here (already set above)
     st.title("📈 Multi-Factor Equity Strategy Dashboard")
 
     aligned_path = ART / "aligned_returns.parquet"
