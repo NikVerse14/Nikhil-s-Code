@@ -26,29 +26,36 @@ def resample_monthly_last(px: pd.DataFrame | pd.Series) -> pd.DataFrame | pd.Ser
 
 
 def to_series(x) -> pd.Series | None:
-    """Robustly coerce 1-D data to a clean Series (drop NaNs)."""
+    """
+    Robustly coerce 1-D data to a clean Series (drop NaNs).
+    - Series: return as Series (name cleared).
+    - 1-col DataFrame: return that column (name cleared).
+    - Multi-col DataFrame: raise ValueError (matches test expectation).
+    - Array-like: convert to Series.
+    """
     if x is None:
         return None
+
     if isinstance(x, pd.Series):
         s = x.dropna()
-        s.name = None  # Clear name to avoid conflicts
+        s.name = None
         return s
+
     if isinstance(x, pd.DataFrame):
-        if x.shape[1] == 1:
-            s = x.iloc[:, 0].dropna()
-            s.name = None
-            return s
-        else:
-            # Raise ValueError for multi-column DataFrames to match test expectations
+        if x.shape[1] != 1:
             raise ValueError("Expected 1-column DataFrame.")
+        s = x.iloc[:, 0].dropna()
+        s.name = None
+        return s
+
+    # Array-like inputs (list/np.ndarray, etc.)
     try:
         arr = np.asarray(x).squeeze()
         s = pd.Series(arr).dropna()
         s.name = None
         return s
     except Exception as e:
-        print(f"Error converting to series: {e}")
-        return None
+        raise TypeError("Unsupported input to to_series().") from e
 
 
 def _weights_from_holdings(holdings, universe) -> pd.Series:
@@ -137,7 +144,6 @@ def performance_stats(returns, bench=None, periods_per_year: int = 12, rf: float
     if bench is not None:
         b = to_series(bench)
         if b is not None and not b.empty:
-            # Align indices properly
             common_idx = r.index.intersection(b.index)
             if len(common_idx) >= 2:
                 rb = r.loc[common_idx]
@@ -152,7 +158,7 @@ def performance_stats(returns, bench=None, periods_per_year: int = 12, rf: float
                 beta, te, ir = np.nan, np.nan, 0.0
         else:
             beta, te, ir = np.nan, np.nan, 0.0
-            
+
         out.update({
             "Beta vs SPY": f"{beta:.2f}",
             "Tracking Error": "n/a" if np.isnan(te) else f"{te:.1%}",
@@ -206,7 +212,6 @@ def stats_monthly(r: pd.Series, b: pd.Series | None = None, rf_annual: float = R
     if b is not None:
         b_series = to_series(b)
         if b_series is not None and not b_series.empty:
-            # Proper alignment of both series
             aligned = pd.concat([r, b_series], axis=1, keys=['strategy', 'benchmark']).dropna()
             if len(aligned) > 2:
                 ex = aligned['strategy'] - aligned['benchmark']
@@ -257,21 +262,16 @@ def build_artifacts():
 
     # Benchmark SPY - ensure proper Series conversion
     spy_px = yf.download(BENCH, start=START, auto_adjust=True, progress=False)["Close"]
-    
-    # Handle the case where spy_px might be a DataFrame with multiple columns
     if isinstance(spy_px, pd.DataFrame):
         if spy_px.shape[1] == 1:
             spy = spy_px.iloc[:, 0]
+        elif 'Close' in spy_px.columns:
+            spy = spy_px['Close']
         else:
-            # If there are multiple columns, try to find a column that looks like prices
-            # Typically it would be the first column or a column named 'Close'
-            if 'Close' in spy_px.columns:
-                spy = spy_px['Close']
-            else:
-                spy = spy_px.iloc[:, 0]
+            spy = spy_px.iloc[:, 0]
     else:
         spy = spy_px
-    
+
     spy = resample_me(spy).pct_change().dropna()
     spy.name = "SPY"
 
@@ -289,10 +289,10 @@ def build_artifacts():
         if col in aligned.columns:
             bench_series = aligned["SPY"] if "SPY" in aligned.columns else None
             rows.append({"Strategy": col, **stats_monthly(aligned[col], bench_series)})
-    
+
     if "SPY" in aligned.columns:
         rows.append({"Strategy": "SPY", **stats_monthly(aligned["SPY"])})
-    
+
     perf = pd.DataFrame(rows).set_index("Strategy")
     perf.to_parquet(ART / "perf_summary.parquet")
     perf.to_csv(ART / "perf_summary.csv")
