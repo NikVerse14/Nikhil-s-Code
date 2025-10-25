@@ -420,22 +420,49 @@ def make_one_pager():
 # =============================== Streamlit app ================================
 
 def run_app():
-    import streamlit as st  # do NOT call set_page_config here (already set above)
+    import streamlit as st  # set_page_config already called at import time
     st.title("📈 Multi-Factor Equity Strategy Dashboard")
 
     aligned_path = ART / "aligned_returns.parquet"
     perf_path    = ART / "perf_summary.parquet"
     betas_png    = ART / "ff5_mom_betas.png"
 
-    if not aligned_path.exists():
-        st.error("Missing artifacts/aligned_returns.parquet. Run: python multifactor_pipeline.py --mode build")
+    # If nothing exists at all, bail with an instruction.
+    if not aligned_path.exists() and not (ART / "aligned_returns.csv").exists():
+        st.error("Missing artifacts. Run: python multifactor_pipeline.py --mode build")
         return
 
-    aligned = pd.read_parquet(aligned_path)
+    # ---- robust artifact loading ----
+    try:
+        aligned = pd.read_parquet(aligned_path, engine="pyarrow")
+    except Exception as e:
+        st.warning(f"Parquet read failed ({e}). Using CSV and regenerating Parquet.")
+        aligned = pd.read_csv(ART / "aligned_returns.csv", index_col=0, parse_dates=True)
+        try:
+            aligned.to_parquet(aligned_path, engine="pyarrow")
+        except Exception:
+            pass
+
+    if perf_path.exists():
+        try:
+            perf = pd.read_parquet(perf_path, engine="pyarrow")
+        except Exception:
+            perf = pd.read_csv(ART / "perf_summary.csv", index_col=0)
+            try:
+                perf.to_parquet(perf_path, engine="pyarrow")
+            except Exception:
+                pass
+    elif (ART / "perf_summary.csv").exists():
+        perf = pd.read_csv(ART / "perf_summary.csv", index_col=0)
+        try:
+            perf.to_parquet(perf_path, engine="pyarrow")
+        except Exception:
+            pass
+    else:
+        perf = None
+
     aligned.index = pd.to_datetime(aligned.index)
     aligned = aligned.sort_index()
-
-    perf = pd.read_parquet(perf_path) if perf_path.exists() else None
 
     st.sidebar.header("Controls")
     bm_col = "SPY" if "SPY" in aligned.columns else aligned.columns[-1]
